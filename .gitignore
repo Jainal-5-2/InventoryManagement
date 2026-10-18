@@ -1,0 +1,35 @@
+# --- Maven ---
+target/
+
+# --- NetBeans specific ---
+nbproject/private/
+nbbuild/
+nbdist/
+nbactions.xml
+nb-configuration.xml
+.buildpath
+.classpath
+.project
+.settings/
+
+# --- Compiled Java ---
+*.class
+
+# --- IDE / Editor ---
+.idea/
+*.iml
+*.iws
+*.ipr
+.vscode/
+*.swp
+
+# --- Logs ---
+*.log
+
+# --- OS junk ---
+.DS_Store
+Thumbs.db
+
+# --- Local env / secrets ---
+*.env
+.env
