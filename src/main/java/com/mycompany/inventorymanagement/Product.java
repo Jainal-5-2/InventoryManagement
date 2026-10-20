@@ -1,7 +1,8 @@
 package com.mycompany.inventorymanagement;
 
 public class Product {
-    public static final int LOW_STOCK_THRESHOLD = 5;
+    /** Fallback used only when a row has no per-product threshold. */
+    public static final int DEFAULT_LOW_STOCK_THRESHOLD = 5;
 
     private int id;
     private String name;
@@ -9,6 +10,7 @@ public class Product {
     private String categoryName;
     private int quantity;
     private double price;
+    private int lowStockThreshold = DEFAULT_LOW_STOCK_THRESHOLD;
 
     public Product() {}
 
@@ -37,13 +39,19 @@ public class Product {
     public double getPrice() { return price; }
     public void setPrice(double price) { this.price = price; }
 
+    public int getLowStockThreshold() { return lowStockThreshold; }
+    public void setLowStockThreshold(int lowStockThreshold) {
+        this.lowStockThreshold = Math.max(0, lowStockThreshold);
+    }
+
     public double getTotalValue() { return quantity * price; }
 
-    public boolean isLowStock() { return quantity <= LOW_STOCK_THRESHOLD; }
+    public boolean isLowStock() { return quantity <= lowStockThreshold; }
 
     @Override
     public String toString() {
-        return String.format("[%d] %s (%s) qty=%d price=%s",
-                id, name, categoryName, quantity, Currency.format(price));
+        return String.format("[%d] %s (%s) qty=%d price=%s low<=%d",
+                id, name, categoryName, quantity,
+                Currency.format(price), lowStockThreshold);
     }
 }

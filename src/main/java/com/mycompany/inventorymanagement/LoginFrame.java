@@ -35,13 +35,15 @@ public class LoginFrame extends JFrame {
         gbc.fill = GridBagConstraints.BOTH;
         gbc.weighty = 1.0;
 
-        gbc.gridx = 0; gbc.weightx = 0.45;
+        gbc.gridx = 0;
+        gbc.weightx = 0.45;
         root.add(UITheme.buildBrandPanel(
                 "Inventory",
                 "Management System",
                 "Track. Manage. Grow."), gbc);
 
-        gbc.gridx = 1; gbc.weightx = 0.55;
+        gbc.gridx = 1;
+        gbc.weightx = 0.55;
         root.add(buildFormPanel(), gbc);
 
         setContentPane(root);
@@ -112,7 +114,8 @@ public class LoginFrame extends JFrame {
 
         JLabel createLink = UITheme.linkLabel("Create one");
         createLink.addMouseListener(new MouseAdapter() {
-            @Override public void mouseClicked(MouseEvent e) {
+            @Override
+            public void mouseClicked(MouseEvent e) {
                 dispose();
                 new RegisterFrame().setVisible(true);
             }
@@ -139,7 +142,15 @@ public class LoginFrame extends JFrame {
         }
 
         UserDAO dao = new UserDAO();
-        User user = dao.authenticate(username, password);
+        User user;
+        try {
+            user = dao.authenticate(username, password);
+        } catch (UserDAO.AuthException ex) {
+            statusLabel.setForeground(ERROR_RED);
+            statusLabel.setText("Cannot connect to the database. Is MySQL running?");
+            ex.printStackTrace();
+            return;
+        }
 
         if (user == null) {
             statusLabel.setForeground(ERROR_RED);
@@ -151,7 +162,6 @@ public class LoginFrame extends JFrame {
         statusLabel.setForeground(SUCCESS_GREEN);
         statusLabel.setText("Welcome, " + user.getFullName());
 
-        // Brief pause so the user sees the success message, then open the dashboard
         Timer timer = new Timer(400, e -> {
             dispose();
             new DashboardFrame(user).setVisible(true);

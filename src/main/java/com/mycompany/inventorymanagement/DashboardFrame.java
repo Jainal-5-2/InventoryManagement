@@ -4,12 +4,19 @@ import com.formdev.flatlaf.FlatLightLaf;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
+import javax.swing.table.DefaultTableCellRenderer;
+import javax.swing.table.DefaultTableModel;
+import javax.swing.table.JTableHeader;
 import java.awt.*;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.awt.geom.RoundRectangle2D;
+import java.time.format.DateTimeFormatter;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
+
+import com.mycompany.inventorymanagement.model.StockMovement;
 
 import static com.mycompany.inventorymanagement.UITheme.*;
 
@@ -26,6 +33,7 @@ public class DashboardFrame extends JFrame {
 
     private InventoryPanel inventoryPanel;
     private ReportsPanel reportsPanel;
+    private UserPanel usersPanel;
     private OverviewPanel overviewPanel;
 
     public DashboardFrame(User user) {
@@ -51,7 +59,6 @@ public class DashboardFrame extends JFrame {
     }
 
     // ---------------- Sidebar ----------------
-
     private JPanel buildSidebar() {
         JPanel sidebar = new JPanel();
         sidebar.setBackground(new Color(248, 249, 252));
@@ -73,12 +80,12 @@ public class DashboardFrame extends JFrame {
             protected void paintComponent(Graphics g) {
                 Graphics2D g2 = (Graphics2D) g.create();
                 g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING,
-                                    RenderingHints.VALUE_ANTIALIAS_ON);
+                        RenderingHints.VALUE_ANTIALIAS_ON);
                 g2.setColor(ACCENT);
                 g2.fillRoundRect(0, 0, getWidth(), getHeight(), 8, 8);
                 g2.setColor(Color.WHITE);
                 g2.setStroke(new BasicStroke(1.8f, BasicStroke.CAP_ROUND,
-                                             BasicStroke.JOIN_ROUND));
+                        BasicStroke.JOIN_ROUND));
                 int cx = getWidth() / 2;
                 int cy = getHeight() / 2;
                 g2.drawRect(cx - 8, cy - 8, 16, 16);
@@ -109,6 +116,8 @@ public class DashboardFrame extends JFrame {
         nav.add(buildNavItem("Inventory", "inventory"));
         nav.add(Box.createVerticalStrut(4));
         nav.add(buildNavItem("Reports", "reports"));
+        nav.add(Box.createVerticalStrut(4));
+        nav.add(buildNavItem("Users", "users"));
 
         JPanel navWrapper = new JPanel(new BorderLayout());
         navWrapper.setOpaque(false);
@@ -129,7 +138,7 @@ public class DashboardFrame extends JFrame {
             protected void paintComponent(Graphics g) {
                 Graphics2D g2 = (Graphics2D) g.create();
                 g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING,
-                                    RenderingHints.VALUE_ANTIALIAS_ON);
+                        RenderingHints.VALUE_ANTIALIAS_ON);
                 g2.setColor(new Color(220, 222, 235));
                 g2.fillOval(0, 0, getWidth(), getHeight());
                 g2.setColor(ACCENT);
@@ -141,7 +150,7 @@ public class DashboardFrame extends JFrame {
                         : "U";
                 int w = fm.stringWidth(initial);
                 g2.drawString(initial, (getWidth() - w) / 2,
-                              (getHeight() + fm.getAscent()) / 2 - 2);
+                        (getHeight() + fm.getAscent()) / 2 - 2);
                 g2.dispose();
             }
         };
@@ -192,17 +201,22 @@ public class DashboardFrame extends JFrame {
         navPanels.put(key, item);
 
         item.addMouseListener(new MouseAdapter() {
-            @Override public void mouseClicked(MouseEvent e) {
+            @Override
+            public void mouseClicked(MouseEvent e) {
                 showPanel(key);
             }
-            @Override public void mouseEntered(MouseEvent e) {
+
+            @Override
+            public void mouseEntered(MouseEvent e) {
                 if (!key.equals(activeKey)) {
                     item.setOpaque(true);
                     item.setBackground(new Color(240, 241, 248));
                     item.repaint();
                 }
             }
-            @Override public void mouseExited(MouseEvent e) {
+
+            @Override
+            public void mouseExited(MouseEvent e) {
                 if (!key.equals(activeKey)) {
                     item.setOpaque(false);
                     item.repaint();
@@ -255,7 +269,6 @@ public class DashboardFrame extends JFrame {
     }
 
     // ---------------- Main area ----------------
-
     private JPanel buildMainArea() {
         JPanel main = new JPanel(new BorderLayout());
         main.setBackground(SURFACE);
@@ -273,19 +286,24 @@ public class DashboardFrame extends JFrame {
         contentArea.setBackground(SURFACE);
         contentArea.setBorder(new EmptyBorder(0, 28, 28, 28));
 
-        inventoryPanel = new InventoryPanel();
+        inventoryPanel = new InventoryPanel(currentUser.getId());
         reportsPanel = new ReportsPanel();
+        usersPanel = new UserPanel(currentUser.getId());
         overviewPanel = new OverviewPanel();
 
-        // When inventory data changes, refresh reports and overview
         inventoryPanel.setOnDataChanged(() -> {
-            if (reportsPanel != null) reportsPanel.refresh();
-            if (overviewPanel != null) overviewPanel.refresh();
+            if (reportsPanel != null) {
+                reportsPanel.refresh();
+            }
+            if (overviewPanel != null) {
+                overviewPanel.refresh();
+            }
         });
 
         contentArea.add(overviewPanel, "dashboard");
         contentArea.add(inventoryPanel, "inventory");
         contentArea.add(reportsPanel, "reports");
+        contentArea.add(usersPanel, "users");
 
         main.add(topBar, BorderLayout.NORTH);
         main.add(contentArea, BorderLayout.CENTER);
@@ -308,16 +326,29 @@ public class DashboardFrame extends JFrame {
     }
 
     // ---------------- Overview ----------------
-
     private class OverviewPanel extends JPanel {
+
         private StatCard productsCard;
         private StatCard lowStockCard;
         private StatCard valueCard;
         private final ProductDAO productDAO = new ProductDAO();
 
+        private DefaultTableModel activityModel;
+        private JLabel emptyActivityLabel;
+
+        // Low-stock card state
+        private DefaultTableModel lowStockModel;
+        private JLabel lowStockCountLabel;
+        private JLabel lowStockHintLabel;
+        private JLabel emptyLowStockLabel;
+
         OverviewPanel() {
             setOpaque(false);
             setLayout(new BorderLayout());
+
+            JPanel top = new JPanel();
+            top.setOpaque(false);
+            top.setLayout(new BoxLayout(top, BoxLayout.Y_AXIS));
 
             JPanel heading = new JPanel();
             heading.setOpaque(false);
@@ -338,9 +369,11 @@ public class DashboardFrame extends JFrame {
             heading.add(welcome);
             heading.add(Box.createVerticalStrut(4));
             heading.add(sub);
+            heading.setAlignmentX(Component.LEFT_ALIGNMENT);
 
             JPanel cards = new JPanel(new GridLayout(1, 3, 18, 0));
             cards.setOpaque(false);
+            cards.setAlignmentX(Component.LEFT_ALIGNMENT);
 
             productsCard = new StatCard("Total Products", "0", "items in system",
                     ACCENT, ICON_BOX, "", true);
@@ -354,14 +387,201 @@ public class DashboardFrame extends JFrame {
             cards.add(lowStockCard);
             cards.add(valueCard);
 
-            JPanel wrapper = new JPanel(new BorderLayout());
-            wrapper.setOpaque(false);
-            wrapper.add(heading, BorderLayout.NORTH);
-            wrapper.add(cards, BorderLayout.CENTER);
+            top.add(heading);
+            top.add(cards);
 
-            add(wrapper, BorderLayout.NORTH);
+            // ---- Middle row: low-stock card + recent activity card ----
+            JPanel middleRow = new JPanel(new GridLayout(1, 2, 16, 0));
+            middleRow.setOpaque(false);
+            middleRow.setAlignmentX(Component.LEFT_ALIGNMENT);
+
+            JPanel lowStockCardPanel = buildLowStockCard();
+            JPanel activityCard = buildActivityCard();
+            middleRow.add(lowStockCardPanel);
+            middleRow.add(activityCard);
+
+            JPanel wrapper = new JPanel(new BorderLayout(0, 16));
+            wrapper.setOpaque(false);
+            wrapper.add(top, BorderLayout.NORTH);
+            wrapper.add(middleRow, BorderLayout.CENTER);
+
+            add(wrapper, BorderLayout.CENTER);
 
             refresh();
+        }
+
+        // ---- Low-stock card ----
+        private JPanel buildLowStockCard() {
+            JPanel card = new RoundedPanel(14, SURFACE);
+            card.setLayout(new BorderLayout());
+            card.setBorder(new EmptyBorder(18, 18, 18, 18));
+
+            JPanel header = new JPanel(new BorderLayout());
+            header.setOpaque(false);
+            header.setBorder(new EmptyBorder(0, 4, 10, 0));
+
+            JLabel title = new JLabel("Low Stock");
+            title.setFont(new Font("Segoe UI", Font.BOLD, 15));
+            title.setForeground(TEXT_DARK);
+            header.add(title, BorderLayout.WEST);
+
+            lowStockCountLabel = new JLabel("0 items");
+            lowStockCountLabel.setFont(new Font("Segoe UI", Font.BOLD, 12));
+            lowStockCountLabel.setForeground(new Color(220, 60, 60));
+            header.add(lowStockCountLabel, BorderLayout.EAST);
+
+            card.add(header, BorderLayout.NORTH);
+
+            String[] cols = {"Product", "Qty", "Threshold"};
+            lowStockModel = new DefaultTableModel(cols, 0) {
+                @Override
+                public boolean isCellEditable(int r, int c) {
+                    return false;
+                }
+            };
+
+            JTable table = new JTable(lowStockModel);
+            styleTable(table);
+
+            table.getColumnModel().getColumn(0).setPreferredWidth(280);
+            table.getColumnModel().getColumn(1).setPreferredWidth(70);
+            table.getColumnModel().getColumn(2).setPreferredWidth(90);
+
+            // Qty renderer — red/bold when at or below threshold
+            DefaultTableCellRenderer qtyR = new DefaultTableCellRenderer() {
+                @Override
+                public Component getTableCellRendererComponent(JTable t, Object v,
+                        boolean sel, boolean focus, int row, int col) {
+                    Component c = super.getTableCellRendererComponent(t, v, sel, focus, row, col);
+                    setHorizontalAlignment(SwingConstants.CENTER);
+                    if (!sel) {
+                        int qty = Integer.parseInt(String.valueOf(v));
+                        Object thr = t.getModel().getValueAt(row, 2);
+                        int threshold = (thr instanceof Integer) ? (Integer) thr : 0;
+                        if (qty <= threshold) {
+                            c.setForeground(new Color(220, 60, 60));
+                            setFont(getFont().deriveFont(Font.BOLD));
+                        } else {
+                            c.setForeground(TEXT_MUTED);
+                            setFont(getFont().deriveFont(Font.PLAIN));
+                        }
+                    }
+                    return c;
+                }
+            };
+            table.getColumnModel().getColumn(1).setCellRenderer(qtyR);
+
+            DefaultTableCellRenderer thrR = new DefaultTableCellRenderer();
+            thrR.setHorizontalAlignment(SwingConstants.CENTER);
+            thrR.setForeground(TEXT_MUTED);
+            table.getColumnModel().getColumn(2).setCellRenderer(thrR);
+
+            JScrollPane scroll = new JScrollPane(table);
+            scroll.setBorder(BorderFactory.createEmptyBorder());
+            scroll.getViewport().setBackground(SURFACE);
+            scroll.setPreferredSize(new Dimension(0, 260));
+
+            card.add(scroll, BorderLayout.CENTER);
+
+            // Footer: hint text (either "N low" or "nothing low, showing lowest")
+            lowStockHintLabel = new JLabel(" ");
+            lowStockHintLabel.setFont(FONT_SMALL);
+            lowStockHintLabel.setForeground(TEXT_MUTED);
+            lowStockHintLabel.setBorder(new EmptyBorder(8, 4, 0, 4));
+
+            emptyLowStockLabel = new JLabel("No products yet.", SwingConstants.CENTER);
+            emptyLowStockLabel.setFont(FONT_SMALL);
+            emptyLowStockLabel.setForeground(TEXT_MUTED);
+            emptyLowStockLabel.setBorder(new EmptyBorder(20, 0, 20, 0));
+            emptyLowStockLabel.setVisible(false);
+
+            JPanel footer = new JPanel(new BorderLayout());
+            footer.setOpaque(false);
+            footer.add(lowStockHintLabel, BorderLayout.NORTH);
+            footer.add(emptyLowStockLabel, BorderLayout.CENTER);
+
+            card.add(footer, BorderLayout.SOUTH);
+
+            return card;
+        }
+
+        private JPanel buildActivityCard() {
+            JPanel card = new RoundedPanel(14, SURFACE);
+            card.setLayout(new BorderLayout());
+            card.setBorder(new EmptyBorder(18, 18, 18, 18));
+
+            JPanel header = new JPanel(new BorderLayout());
+            header.setOpaque(false);
+            header.setBorder(new EmptyBorder(0, 4, 10, 0));
+
+            JLabel title = new JLabel("Recent Activity");
+            title.setFont(new Font("Segoe UI", Font.BOLD, 15));
+            title.setForeground(TEXT_DARK);
+            header.add(title, BorderLayout.WEST);
+
+            JLabel hint = new JLabel("last 10 stock changes");
+            hint.setFont(new Font("Segoe UI", Font.PLAIN, 11));
+            hint.setForeground(TEXT_MUTED);
+            header.add(hint, BorderLayout.EAST);
+
+            card.add(header, BorderLayout.NORTH);
+
+            String[] cols = {"When", "Product", "Change", "Reason", "By"};
+            activityModel = new DefaultTableModel(cols, 0) {
+                @Override
+                public boolean isCellEditable(int r, int c) {
+                    return false;
+                }
+            };
+
+            JTable table = new JTable(activityModel);
+            styleTable(table);
+
+            table.getColumnModel().getColumn(0).setPreferredWidth(110);
+            table.getColumnModel().getColumn(1).setPreferredWidth(180);
+            table.getColumnModel().getColumn(2).setPreferredWidth(70);
+            table.getColumnModel().getColumn(3).setPreferredWidth(200);
+            table.getColumnModel().getColumn(4).setPreferredWidth(120);
+
+            DefaultTableCellRenderer deltaR = new DefaultTableCellRenderer() {
+                @Override
+                public Component getTableCellRendererComponent(JTable t, Object v,
+                        boolean sel, boolean focus, int row, int col) {
+                    Component c = super.getTableCellRendererComponent(t, v, sel, focus, row, col);
+                    setHorizontalAlignment(SwingConstants.CENTER);
+                    if (!sel) {
+                        String s = String.valueOf(v);
+                        c.setForeground(s.startsWith("-")
+                                ? new Color(220, 60, 60)
+                                : new Color(34, 160, 90));
+                        setFont(getFont().deriveFont(Font.BOLD));
+                    }
+                    return c;
+                }
+            };
+            table.getColumnModel().getColumn(2).setCellRenderer(deltaR);
+
+            DefaultTableCellRenderer mutedR = new DefaultTableCellRenderer();
+            mutedR.setForeground(TEXT_MUTED);
+            table.getColumnModel().getColumn(0).setCellRenderer(mutedR);
+            table.getColumnModel().getColumn(3).setCellRenderer(mutedR);
+            table.getColumnModel().getColumn(4).setCellRenderer(mutedR);
+
+            JScrollPane scroll = new JScrollPane(table);
+            scroll.setBorder(BorderFactory.createEmptyBorder());
+            scroll.getViewport().setBackground(SURFACE);
+            scroll.setPreferredSize(new Dimension(0, 260));
+
+            card.add(scroll, BorderLayout.CENTER);
+
+            emptyActivityLabel = new JLabel("No stock activity yet.", SwingConstants.CENTER);
+            emptyActivityLabel.setFont(FONT_SMALL);
+            emptyActivityLabel.setForeground(TEXT_MUTED);
+            emptyActivityLabel.setBorder(new EmptyBorder(20, 0, 20, 0));
+            emptyActivityLabel.setVisible(false);
+            card.add(emptyActivityLabel, BorderLayout.SOUTH);
+
+            return card;
         }
 
         public void refresh() {
@@ -382,10 +602,110 @@ public class DashboardFrame extends JFrame {
 
             valueCard.setValue(Currency.format(value));
             valueCard.setTrend("Live total");
+
+            refreshLowStockTable(lowStock);
+            refreshActivity();
+        }
+
+        private void refreshLowStockTable(int lowStockCount) {
+            lowStockModel.setRowCount(0);
+
+            List<Product> toShow;
+            boolean usingFallback = false;
+
+            if (lowStockCount > 0) {
+                toShow = productDAO.findLowStock();
+                if (toShow.size() > 8) {
+                    toShow = toShow.subList(0, 8);
+                }
+            } else {
+                toShow = productDAO.findLowestStock(8);
+                usingFallback = true;
+            }
+
+            if (toShow.isEmpty()) {
+                // No products at all in the system
+                emptyLowStockLabel.setVisible(true);
+                lowStockCountLabel.setText("0 items");
+                lowStockCountLabel.setForeground(TEXT_MUTED);
+                lowStockHintLabel.setText(" ");
+                return;
+            }
+            emptyLowStockLabel.setVisible(false);
+
+            for (Product p : toShow) {
+                lowStockModel.addRow(new Object[]{
+                    p.getName(),
+                    p.getQuantity(),
+                    p.getLowStockThreshold()
+                });
+            }
+
+            if (usingFallback) {
+                lowStockCountLabel.setText(toShow.size() + " items");
+                lowStockCountLabel.setForeground(TEXT_MUTED);
+                lowStockHintLabel.setText("No items are below their threshold; "
+                        + "showing the lowest quantities.");
+            } else {
+                lowStockCountLabel.setText(lowStockCount + (lowStockCount == 1
+                        ? " item low" : " items low"));
+                lowStockCountLabel.setForeground(new Color(220, 60, 60));
+                lowStockHintLabel.setText("At or below each product's own threshold.");
+            }
+        }
+
+        private void refreshActivity() {
+            activityModel.setRowCount(0);
+
+            List<StockMovement> recent = productDAO.findRecentMovements(10);
+
+            if (recent.isEmpty()) {
+                emptyActivityLabel.setVisible(true);
+                return;
+            }
+            emptyActivityLabel.setVisible(false);
+
+            DateTimeFormatter fmt = DateTimeFormatter.ofPattern("MMM d, HH:mm");
+
+            for (StockMovement m : recent) {
+                String when = m.getMovedAt() != null
+                        ? m.getMovedAt().toLocalDateTime().format(fmt)
+                        : "—";
+                String product = m.getProductName() != null
+                        ? m.getProductName()
+                        : ("#" + m.getProductId());
+                String delta = (m.getChangeQty() > 0 ? "+" : "") + m.getChangeQty();
+                String reason = m.getReason() != null && !m.getReason().isBlank()
+                        ? m.getReason()
+                        : "—";
+                String by = m.getUserName() != null ? m.getUserName() : "—";
+
+                activityModel.addRow(new Object[]{when, product, delta, reason, by});
+            }
+        }
+
+        private void styleTable(JTable table) {
+            table.setFont(FONT_BASE);
+            table.setRowHeight(34);
+            table.setShowGrid(false);
+            table.setIntercellSpacing(new Dimension(0, 0));
+            table.setSelectionBackground(new Color(237, 237, 252));
+            table.setSelectionForeground(TEXT_DARK);
+            table.setFillsViewportHeight(true);
+
+            JTableHeader headerRow = table.getTableHeader();
+            headerRow.setFont(new Font("Segoe UI", Font.BOLD, 12));
+            headerRow.setForeground(TEXT_MUTED);
+            headerRow.setBackground(new Color(250, 251, 254));
+            headerRow.setPreferredSize(new Dimension(0, 32));
+            headerRow.setBorder(BorderFactory.createMatteBorder(0, 0, 1, 0,
+                    new Color(230, 232, 238)));
+            headerRow.setReorderingAllowed(false);
         }
     }
 
     private static class StatCard extends JPanel {
+
         private final Color accent;
         private final int iconType;
 
@@ -395,7 +715,7 @@ public class DashboardFrame extends JFrame {
         private boolean trendUp;
 
         StatCard(String title, String value, String subtitle,
-                 Color accent, int iconType, String trend, boolean trendUp) {
+                Color accent, int iconType, String trend, boolean trendUp) {
 
             this.accent = accent;
             this.iconType = iconType;
@@ -421,14 +741,14 @@ public class DashboardFrame extends JFrame {
                 protected void paintComponent(Graphics g) {
                     Graphics2D g2 = (Graphics2D) g.create();
                     g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING,
-                                        RenderingHints.VALUE_ANTIALIAS_ON);
+                            RenderingHints.VALUE_ANTIALIAS_ON);
                     g2.setColor(new Color(accent.getRed(), accent.getGreen(),
-                                          accent.getBlue(), 30));
+                            accent.getBlue(), 30));
                     g2.fillRoundRect(0, 0, getWidth(), getHeight(), 10, 10);
 
                     g2.setColor(accent);
                     g2.setStroke(new BasicStroke(1.8f, BasicStroke.CAP_ROUND,
-                                                 BasicStroke.JOIN_ROUND));
+                            BasicStroke.JOIN_ROUND));
                     int cx = getWidth() / 2;
                     int cy = getHeight() / 2;
 
@@ -473,12 +793,12 @@ public class DashboardFrame extends JFrame {
                 protected void paintComponent(Graphics g) {
                     Graphics2D g2 = (Graphics2D) g.create();
                     g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING,
-                                        RenderingHints.VALUE_ANTIALIAS_ON);
+                            RenderingHints.VALUE_ANTIALIAS_ON);
                     Color trendColor = StatCard.this.trendUp
                             ? new Color(34, 160, 90)
                             : new Color(220, 60, 60);
                     g2.setColor(new Color(trendColor.getRed(), trendColor.getGreen(),
-                                          trendColor.getBlue(), 28));
+                            trendColor.getBlue(), 28));
                     g2.fillRoundRect(0, 0, getWidth(), getHeight(), 10, 10);
                     g2.dispose();
                     super.paintComponent(g);
@@ -511,13 +831,16 @@ public class DashboardFrame extends JFrame {
             add(content, BorderLayout.CENTER);
         }
 
-        void setValue(String v) { valueLabel.setText(v); }
+        void setValue(String v) {
+            valueLabel.setText(v);
+        }
 
-        void setSubtitle(String s) { subLabel.setText(s); }
+        void setSubtitle(String s) {
+            subLabel.setText(s);
+        }
 
         void setTrend(String t) {
             trendLabel.setText(t);
-            // hide the pill if empty
             trendLabel.setVisible(t != null && !t.isEmpty());
         }
 
@@ -534,7 +857,7 @@ public class DashboardFrame extends JFrame {
         protected void paintComponent(Graphics g) {
             Graphics2D g2 = (Graphics2D) g.create();
             g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING,
-                                RenderingHints.VALUE_ANTIALIAS_ON);
+                    RenderingHints.VALUE_ANTIALIAS_ON);
 
             int w = getWidth();
             int h = getHeight();
@@ -562,15 +885,4 @@ public class DashboardFrame extends JFrame {
     private static final int ICON_BOX = 0;
     private static final int ICON_ALERT = 1;
     private static final int ICON_DOLLAR = 2;
-
-    // ---------------- Entry ----------------
-
-    public static void main(String[] args) {
-        UITheme.applyGlobalFont();
-        FlatLightLaf.setup();
-        SwingUtilities.invokeLater(() -> {
-            User demo = new User(1, "admin", "admin123", "System Administrator");
-            new DashboardFrame(demo).setVisible(true);
-        });
-    }
 }

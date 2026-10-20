@@ -32,6 +32,10 @@ public class ReportsPanel extends JPanel {
     private DefaultTableModel breakdownModel;
     private JLabel breakdownTotalLabel;
 
+    // Pie chart state — dataset lives here so refresh() can mutate it
+    private DefaultPieDataset<String> pieDataset;
+    private PiePlot piePlot;
+
     public ReportsPanel() {
         initUI();
         refresh();
@@ -76,7 +80,40 @@ public class ReportsPanel extends JPanel {
         }
         breakdownTotalLabel.setText("Total: " + Currency.format(totalValue)
                 + "  ·  " + all.size() + (all.size() == 1 ? " product" : " products"));
+
+        // ---- Pie chart (rebuild dataset in place) ----
+        refreshPieChart(all);
     }
+
+    private void refreshPieChart(List<Product> products) {
+        if (pieDataset == null || piePlot == null) return;
+
+        pieDataset.clear();
+        for (Product p : products) {
+            double value = p.getTotalValue();
+            if (value <= 0) continue;
+            pieDataset.setValue(p.getName() + " (" + Currency.format(value) + ")", value);
+        }
+
+        // Re-apply palette so colours follow the current keys.
+        Color[] palette = PIE_PALETTE;
+        int i = 0;
+        for (Object key : pieDataset.getKeys()) {
+            piePlot.setSectionPaint((Comparable<?>) key, palette[i % palette.length]);
+            i++;
+        }
+    }
+
+    private static final Color[] PIE_PALETTE = {
+            ACCENT,
+            new Color(139, 92, 246),
+            new Color(34, 160, 90),
+            new Color(245, 158, 11),
+            new Color(220, 60, 60),
+            new Color(59, 130, 246),
+            new Color(16, 185, 129),
+            new Color(236, 72, 153)
+    };
 
     private void initUI() {
         setOpaque(false);
@@ -202,16 +239,10 @@ public class ReportsPanel extends JPanel {
     }
 
     private ChartPanel buildPieChart() {
-        DefaultPieDataset<String> dataset = new DefaultPieDataset<>();
-
-        for (Product p : productDAO.findAll()) {
-            double value = p.getTotalValue();
-            if (value <= 0) continue;
-            dataset.setValue(p.getName() + " (" + Currency.format(value) + ")", value);
-        }
+        pieDataset = new DefaultPieDataset<>();
 
         JFreeChart chart = ChartFactory.createPieChart(
-                null, dataset, true, true, false);
+                null, pieDataset, true, true, false);
 
         chart.setBackgroundPaint(SURFACE);
         chart.setPadding(new RectangleInsets(4, 4, 4, 4));
@@ -219,35 +250,19 @@ public class ReportsPanel extends JPanel {
         chart.getLegend().setBackgroundPaint(SURFACE);
         chart.getLegend().setBorder(0, 0, 0, 0);
 
-        PiePlot plot = (PiePlot) chart.getPlot();
-        plot.setBackgroundPaint(SURFACE);
-        plot.setOutlineVisible(false);
-        plot.setSectionOutlinesVisible(false);
-        plot.setShadowPaint(null);
-        plot.setLabelFont(new Font("Segoe UI", Font.PLAIN, 11));
-        plot.setLabelBackgroundPaint(null);
-        plot.setLabelOutlinePaint(null);
-        plot.setLabelShadowPaint(null);
-        plot.setLabelPaint(TEXT_DARK);
+        piePlot = (PiePlot) chart.getPlot();
+        piePlot.setBackgroundPaint(SURFACE);
+        piePlot.setOutlineVisible(false);
+        piePlot.setSectionOutlinesVisible(false);
+        piePlot.setShadowPaint(null);
+        piePlot.setLabelFont(new Font("Segoe UI", Font.PLAIN, 11));
+        piePlot.setLabelBackgroundPaint(null);
+        piePlot.setLabelOutlinePaint(null);
+        piePlot.setLabelShadowPaint(null);
+        piePlot.setLabelPaint(TEXT_DARK);
 
-        plot.setLabelGenerator(new StandardPieSectionLabelGenerator(
+        piePlot.setLabelGenerator(new StandardPieSectionLabelGenerator(
                 "{2}", new DecimalFormat("0"), new DecimalFormat("0.0%")));
-
-        Color[] palette = {
-                ACCENT,
-                new Color(139, 92, 246),
-                new Color(34, 160, 90),
-                new Color(245, 158, 11),
-                new Color(220, 60, 60),
-                new Color(59, 130, 246),
-                new Color(16, 185, 129),
-                new Color(236, 72, 153)
-        };
-        int i = 0;
-        for (Object key : dataset.getKeys()) {
-            plot.setSectionPaint((Comparable<?>) key, palette[i % palette.length]);
-            i++;
-        }
 
         ChartPanel panel = new ChartPanel(chart);
         panel.setOpaque(false);
@@ -274,7 +289,8 @@ public class ReportsPanel extends JPanel {
         title.setForeground(TEXT_DARK);
         header.add(title, BorderLayout.WEST);
 
-        JLabel hint = new JLabel("≤ " + Product.LOW_STOCK_THRESHOLD + " units");
+        // Per-product thresholds — no single cutoff number to show.
+        JLabel hint = new JLabel("at or below each product's limit");
         hint.setFont(new Font("Segoe UI", Font.PLAIN, 11));
         hint.setForeground(TEXT_MUTED);
         header.add(hint, BorderLayout.EAST);

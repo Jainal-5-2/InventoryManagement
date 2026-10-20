@@ -1,5 +1,8 @@
 package com.mycompany.inventorymanagement;
 
+import com.mycompany.inventorymanagement.ui.CategoryDialog;
+import com.mycompany.inventorymanagement.ui.StockMoveDialog;
+
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
 import javax.swing.table.DefaultTableCellRenderer;
@@ -15,6 +18,7 @@ import static com.mycompany.inventorymanagement.UITheme.*;
 public class InventoryPanel extends JPanel {
 
     private final ProductDAO productDAO = new ProductDAO();
+    private final Integer currentUserId;   // nullable — no user context in some tests
 
     private JTable table;
     private DefaultTableModel model;
@@ -24,7 +28,8 @@ public class InventoryPanel extends JPanel {
 
     private Runnable onDataChanged;
 
-    public InventoryPanel() {
+    public InventoryPanel(Integer currentUserId) {
+        this.currentUserId = currentUserId;
         initUI();
         reload();
     }
@@ -34,7 +39,9 @@ public class InventoryPanel extends JPanel {
     }
 
     private void notifyDataChanged() {
-        if (onDataChanged != null) onDataChanged.run();
+        if (onDataChanged != null) {
+            onDataChanged.run();
+        }
     }
 
     private void initUI() {
@@ -46,13 +53,15 @@ public class InventoryPanel extends JPanel {
     }
 
     // ---------------- Toolbar ----------------
-
     private JPanel buildToolbar() {
-        JPanel bar = new JPanel(new BorderLayout(12, 0));
+        JPanel bar = new JPanel();
         bar.setOpaque(false);
+        bar.setLayout(new BoxLayout(bar, BoxLayout.Y_AXIS));
 
-        JPanel filters = new JPanel(new BorderLayout(10, 0));
+        // ---- Row 1: filters ----
+        JPanel filters = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 0));
         filters.setOpaque(false);
+        filters.setAlignmentX(Component.LEFT_ALIGNMENT);
 
         searchField = new JTextField();
         searchField.setFont(FONT_BASE);
@@ -63,9 +72,17 @@ public class InventoryPanel extends JPanel {
                 BorderFactory.createEmptyBorder(8, 14, 8, 14)));
         searchField.setPreferredSize(new Dimension(260, 40));
         searchField.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
-            public void insertUpdate(javax.swing.event.DocumentEvent e) { applyFilters(); }
-            public void removeUpdate(javax.swing.event.DocumentEvent e) { applyFilters(); }
-            public void changedUpdate(javax.swing.event.DocumentEvent e) { applyFilters(); }
+            public void insertUpdate(javax.swing.event.DocumentEvent e) {
+                applyFilters();
+            }
+
+            public void removeUpdate(javax.swing.event.DocumentEvent e) {
+                applyFilters();
+            }
+
+            public void changedUpdate(javax.swing.event.DocumentEvent e) {
+                applyFilters();
+            }
         });
 
         categoryFilter = new JComboBox<>();
@@ -78,47 +95,75 @@ public class InventoryPanel extends JPanel {
         }
         categoryFilter.addActionListener(e -> applyFilters());
 
-        filters.add(searchField, BorderLayout.WEST);
-        filters.add(categoryFilter, BorderLayout.CENTER);
+        filters.add(searchField);
+        filters.add(categoryFilter);
 
+        // ---- Row 2: actions ----
         JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
         actions.setOpaque(false);
+        actions.setAlignmentX(Component.LEFT_ALIGNMENT);
+
+        JButton stockInBtn = new AccentButton("Stock In");
+        stockInBtn.setPreferredSize(new Dimension(110, 40));
+        stockInBtn.addActionListener(e -> doStockMove(true));
+
+        JButton stockOutBtn = new AccentButton("Stock Out");
+        stockOutBtn.setPreferredSize(new Dimension(115, 40));
+        stockOutBtn.addActionListener(e -> doStockMove(false));
 
         JButton addBtn = new AccentButton("+ Add Product");
         addBtn.setPreferredSize(new Dimension(150, 40));
         addBtn.addActionListener(e -> openDialog(null));
 
+        JButton categoriesBtn = new SecondaryButton("Categories");
+        categoriesBtn.setPreferredSize(new Dimension(110, 40));
+        categoriesBtn.addActionListener(e -> doManageCategories());
+
         JButton editBtn = new SecondaryButton("Edit");
         editBtn.setPreferredSize(new Dimension(90, 40));
         editBtn.addActionListener(e -> {
             Product selected = getSelectedProduct();
-            if (selected == null) { showInfo("Select a product to edit."); return; }
+            if (selected == null) {
+                showInfo("Select a product to edit.");
+                return;
+            }
             openDialog(selected);
         });
+
+        JButton historyBtn = new SecondaryButton("History");
+        historyBtn.setPreferredSize(new Dimension(100, 40));
+        historyBtn.addActionListener(e -> doShowHistory());
 
         JButton deleteBtn = new DangerButton("Delete");
         deleteBtn.setPreferredSize(new Dimension(100, 40));
         deleteBtn.addActionListener(e -> doDelete());
 
+        actions.add(stockInBtn);
+        actions.add(stockOutBtn);
         actions.add(addBtn);
+        actions.add(categoriesBtn);
         actions.add(editBtn);
+        actions.add(historyBtn);
         actions.add(deleteBtn);
 
-        bar.add(filters, BorderLayout.WEST);
-        bar.add(actions, BorderLayout.EAST);
+        bar.add(filters);
+        bar.add(Box.createVerticalStrut(10));
+        bar.add(actions);
         return bar;
     }
 
     // ---------------- Table ----------------
-
     private JPanel buildTableArea() {
         JPanel wrap = new RoundedPanel(14, SURFACE);
         wrap.setLayout(new BorderLayout());
         wrap.setBorder(new EmptyBorder(4, 4, 4, 4));
 
-        String[] cols = { "ID", "Name", "Category", "Quantity", "Price", "Total" };
+        String[] cols = {"ID", "Name", "Category", "Quantity", "Price", "Total", "Threshold"};
         model = new DefaultTableModel(cols, 0) {
-            @Override public boolean isCellEditable(int r, int c) { return false; }
+            @Override
+            public boolean isCellEditable(int r, int c) {
+                return false;
+            }
         };
 
         table = new JTable(model);
@@ -146,16 +191,24 @@ public class InventoryPanel extends JPanel {
         table.getColumnModel().getColumn(4).setPreferredWidth(110);
         table.getColumnModel().getColumn(5).setPreferredWidth(130);
 
+        // Hide the helper column — renderer still reads it from the model.
+        table.getColumnModel().getColumn(6).setMinWidth(0);
+        table.getColumnModel().getColumn(6).setMaxWidth(0);
+        table.getColumnModel().getColumn(6).setWidth(0);
+
         table.getColumnModel().getColumn(3).setCellRenderer(new LowStockRenderer());
         table.getColumnModel().getColumn(0).setCellRenderer(new RightAlignRenderer());
         table.getColumnModel().getColumn(4).setCellRenderer(new PriceRenderer());
         table.getColumnModel().getColumn(5).setCellRenderer(new TotalRenderer());
 
         table.addMouseListener(new MouseAdapter() {
-            @Override public void mouseClicked(MouseEvent e) {
+            @Override
+            public void mouseClicked(MouseEvent e) {
                 if (e.getClickCount() == 2 && table.getSelectedRow() >= 0) {
                     Product p = getSelectedProduct();
-                    if (p != null) openDialog(p);
+                    if (p != null) {
+                        openDialog(p);
+                    }
                 }
             }
         });
@@ -180,7 +233,6 @@ public class InventoryPanel extends JPanel {
     }
 
     // ---------------- Data operations ----------------
-
     private void reload() {
         applyFilters();
     }
@@ -208,12 +260,13 @@ public class InventoryPanel extends JPanel {
         model.setRowCount(0);
         for (Product p : list) {
             model.addRow(new Object[]{
-                    p.getId(),
-                    p.getName(),
-                    p.getCategoryName() == null ? "—" : p.getCategoryName(),
-                    p.getQuantity(),
-                    Currency.format(p.getPrice()),
-                    Currency.format(p.getTotalValue())
+                p.getId(),
+                p.getName(),
+                p.getCategoryName() == null ? "—" : p.getCategoryName(),
+                p.getQuantity(),
+                Currency.format(p.getPrice()),
+                Currency.format(p.getTotalValue()),
+                p.getLowStockThreshold()
             });
         }
         countLabel.setText(list.size() + (list.size() == 1 ? " product" : " products"));
@@ -221,14 +274,19 @@ public class InventoryPanel extends JPanel {
 
     private Product getSelectedProduct() {
         int row = table.getSelectedRow();
-        if (row < 0) return null;
+        if (row < 0) {
+            return null;
+        }
         int id = (int) model.getValueAt(row, 0);
         return productDAO.findById(id);
     }
 
     private void doDelete() {
         Product p = getSelectedProduct();
-        if (p == null) { showInfo("Select a product to delete."); return; }
+        if (p == null) {
+            showInfo("Select a product to delete.");
+            return;
+        }
 
         int choice = JOptionPane.showConfirmDialog(this,
                 "Delete \"" + p.getName() + "\"?",
@@ -246,9 +304,93 @@ public class InventoryPanel extends JPanel {
         }
     }
 
+    // ---------------- Stock in / out ----------------
+    private void doStockMove(boolean in) {
+        Product selected = getSelectedProduct();
+        if (selected == null) {
+            showInfo("Select a product first.");
+            return;
+        }
+
+        StockMoveDialog dialog = new StockMoveDialog(
+                SwingUtilities.getWindowAncestor(this), selected, in);
+        dialog.setVisible(true);
+
+        if (!dialog.isConfirmed()) {
+            return;
+        }
+
+        int delta = dialog.getQuantity();
+        if (!in) {
+            delta = -delta;
+        }
+
+        int newQty = selected.getQuantity() + delta;
+        if (newQty < 0) {
+            showInfo("Stock out would result in negative quantity. "
+                    + "Only " + selected.getQuantity() + " in stock.");
+            return;
+        }
+
+        selected.setQuantity(newQty);
+        String reason = dialog.getReason();
+        if (reason == null || reason.isBlank()) {
+            reason = in ? "Stock in" : "Stock out";
+        } else {
+            reason = reason.replaceAll("\\s+", " ").trim();
+        }
+
+        if (productDAO.update(selected, reason, currentUserId)) {
+            reload();
+            notifyDataChanged();
+        } else {
+            showInfo("Failed to save stock change.");
+        }
+    }
+
+    // ---------------- History ----------------
+    private void doShowHistory() {
+        Product p = getSelectedProduct();
+        if (p == null) {
+            showInfo("Select a product first.");
+            return;
+        }
+        StockHistoryDialog dialog = new StockHistoryDialog(
+                SwingUtilities.getWindowAncestor(this), p, productDAO);
+        dialog.setVisible(true);
+    }
+
+    // ---------------- Categories ----------------
+    private void doManageCategories() {
+        CategoryDialog dialog = new CategoryDialog(
+                SwingUtilities.getWindowAncestor(this));
+        dialog.setVisible(true);
+        if (dialog.isChanged()) {
+            Category current = (Category) categoryFilter.getSelectedItem();
+            int previousId = current == null ? -1 : current.getId();
+
+            categoryFilter.removeAllItems();
+            categoryFilter.addItem(new Category(-1, "All categories"));
+            for (Category c : productDAO.findAllCategories()) {
+                categoryFilter.addItem(c);
+            }
+            for (int i = 0; i < categoryFilter.getItemCount(); i++) {
+                if (categoryFilter.getItemAt(i).getId() == previousId) {
+                    categoryFilter.setSelectedIndex(i);
+                    break;
+                }
+            }
+
+            reload();
+            notifyDataChanged();
+        }
+    }
+
+    // ---------------- Add / Edit ----------------
     private void openDialog(Product existing) {
         ProductDialog dialog = new ProductDialog(
-                SwingUtilities.getWindowAncestor(this), existing);
+                SwingUtilities.getWindowAncestor(this), existing,
+                productDAO, currentUserId);
         dialog.setVisible(true);
         if (dialog.isSaved()) {
             reload();
@@ -262,8 +404,10 @@ public class InventoryPanel extends JPanel {
     }
 
     // ---------------- Renderers ----------------
-
     private static class LowStockRenderer extends DefaultTableCellRenderer {
+
+        private static final int THRESHOLD_COLUMN = 6;
+
         @Override
         public Component getTableCellRendererComponent(JTable table, Object value,
                 boolean isSelected, boolean hasFocus, int row, int column) {
@@ -272,7 +416,10 @@ public class InventoryPanel extends JPanel {
             setHorizontalAlignment(SwingConstants.CENTER);
             if (!isSelected) {
                 int qty = Integer.parseInt(value.toString());
-                if (qty <= Product.LOW_STOCK_THRESHOLD) {
+                Object thr = table.getModel().getValueAt(row, THRESHOLD_COLUMN);
+                int threshold = (thr instanceof Integer) ? (Integer) thr
+                        : Product.DEFAULT_LOW_STOCK_THRESHOLD;
+                if (qty <= threshold) {
                     c.setForeground(new Color(220, 60, 60));
                     setFont(getFont().deriveFont(Font.BOLD));
                 } else {
@@ -285,24 +432,35 @@ public class InventoryPanel extends JPanel {
     }
 
     private static class RightAlignRenderer extends DefaultTableCellRenderer {
-        RightAlignRenderer() { setHorizontalAlignment(SwingConstants.RIGHT); }
+
+        RightAlignRenderer() {
+            setHorizontalAlignment(SwingConstants.RIGHT);
+        }
     }
 
     private static class PriceRenderer extends DefaultTableCellRenderer {
-        PriceRenderer() { setHorizontalAlignment(SwingConstants.RIGHT); }
+
+        PriceRenderer() {
+            setHorizontalAlignment(SwingConstants.RIGHT);
+        }
 
         @Override
         public Component getTableCellRendererComponent(JTable table, Object value,
                 boolean isSelected, boolean hasFocus, int row, int column) {
             Component c = super.getTableCellRendererComponent(table, value,
                     isSelected, hasFocus, row, column);
-            if (!isSelected) c.setForeground(TEXT_DARK);
+            if (!isSelected) {
+                c.setForeground(TEXT_DARK);
+            }
             return c;
         }
     }
 
     private static class TotalRenderer extends DefaultTableCellRenderer {
-        TotalRenderer() { setHorizontalAlignment(SwingConstants.RIGHT); }
+
+        TotalRenderer() {
+            setHorizontalAlignment(SwingConstants.RIGHT);
+        }
 
         @Override
         public Component getTableCellRendererComponent(JTable table, Object value,
@@ -317,12 +475,13 @@ public class InventoryPanel extends JPanel {
         }
     }
 
-    // ---------------- Buttons ----------------
+    // ---------------- Shared button styles ----------------
+    // public so dialogs in com.mycompany.inventorymanagement.ui can reuse them.
+    public static class SecondaryButton extends JButton {
 
-    private static class SecondaryButton extends JButton {
         private boolean hovered = false;
 
-        SecondaryButton(String text) {
+        public SecondaryButton(String text) {
             super(text);
             setFont(FONT_BUTTON);
             setForeground(TEXT_DARK);
@@ -331,8 +490,17 @@ public class InventoryPanel extends JPanel {
             setContentAreaFilled(false);
             setCursor(new Cursor(Cursor.HAND_CURSOR));
             addMouseListener(new MouseAdapter() {
-                @Override public void mouseEntered(MouseEvent e) { hovered = true; repaint(); }
-                @Override public void mouseExited(MouseEvent e)  { hovered = false; repaint(); }
+                @Override
+                public void mouseEntered(MouseEvent e) {
+                    hovered = true;
+                    repaint();
+                }
+
+                @Override
+                public void mouseExited(MouseEvent e) {
+                    hovered = false;
+                    repaint();
+                }
             });
         }
 
@@ -340,7 +508,7 @@ public class InventoryPanel extends JPanel {
         protected void paintComponent(Graphics g) {
             Graphics2D g2 = (Graphics2D) g.create();
             g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING,
-                                RenderingHints.VALUE_ANTIALIAS_ON);
+                    RenderingHints.VALUE_ANTIALIAS_ON);
             g2.setColor(hovered ? new Color(235, 236, 242) : new Color(245, 246, 250));
             g2.fillRoundRect(0, 0, getWidth(), getHeight(), 10, 10);
             g2.setColor(new Color(210, 212, 222));
@@ -350,10 +518,11 @@ public class InventoryPanel extends JPanel {
         }
     }
 
-    private static class DangerButton extends JButton {
+    public static class DangerButton extends JButton {
+
         private boolean hovered = false;
 
-        DangerButton(String text) {
+        public DangerButton(String text) {
             super(text);
             setFont(FONT_BUTTON);
             setForeground(new Color(220, 60, 60));
@@ -362,8 +531,17 @@ public class InventoryPanel extends JPanel {
             setContentAreaFilled(false);
             setCursor(new Cursor(Cursor.HAND_CURSOR));
             addMouseListener(new MouseAdapter() {
-                @Override public void mouseEntered(MouseEvent e) { hovered = true; repaint(); }
-                @Override public void mouseExited(MouseEvent e)  { hovered = false; repaint(); }
+                @Override
+                public void mouseEntered(MouseEvent e) {
+                    hovered = true;
+                    repaint();
+                }
+
+                @Override
+                public void mouseExited(MouseEvent e) {
+                    hovered = false;
+                    repaint();
+                }
             });
         }
 
@@ -371,213 +549,13 @@ public class InventoryPanel extends JPanel {
         protected void paintComponent(Graphics g) {
             Graphics2D g2 = (Graphics2D) g.create();
             g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING,
-                                RenderingHints.VALUE_ANTIALIAS_ON);
+                    RenderingHints.VALUE_ANTIALIAS_ON);
             g2.setColor(hovered ? new Color(252, 235, 235) : new Color(252, 244, 244));
             g2.fillRoundRect(0, 0, getWidth(), getHeight(), 10, 10);
             g2.setColor(new Color(240, 200, 200));
             g2.drawRoundRect(0, 0, getWidth() - 1, getHeight() - 1, 10, 10);
             g2.dispose();
             super.paintComponent(g);
-        }
-    }
-
-    // ---------------- Add/Edit dialog ----------------
-
-    private class ProductDialog extends JDialog {
-        private final Product existing;
-        private boolean saved = false;
-
-        private JTextField nameField;
-        private JComboBox<Category> categoryBox;
-        private JTextField quantityField;
-        private JTextField priceField;
-
-        ProductDialog(Window owner, Product existing) {
-            super(owner, existing == null ? "Add Product" : "Edit Product",
-                    ModalityType.APPLICATION_MODAL);
-            this.existing = existing;
-            initUI();
-        }
-
-        boolean isSaved() { return saved; }
-
-        private void initUI() {
-            setSize(460, 520);
-            setMinimumSize(new Dimension(420, 380));
-            setLocationRelativeTo(getOwner());
-            setResizable(true);
-
-            JPanel root = new JPanel(new BorderLayout());
-            root.setBackground(SURFACE);
-
-            JPanel header = new JPanel(new BorderLayout());
-            header.setBackground(SURFACE);
-            header.setBorder(new EmptyBorder(24, 30, 16, 30));
-
-            JLabel heading = new JLabel(existing == null ? "New product" : "Edit product");
-            heading.setFont(FONT_HEADING);
-            heading.setForeground(TEXT_DARK);
-            header.add(heading, BorderLayout.WEST);
-
-            root.add(header, BorderLayout.NORTH);
-
-            JPanel form = new JPanel(new GridBagLayout());
-            form.setOpaque(false);
-            form.setBorder(new EmptyBorder(0, 30, 16, 30));
-
-            GridBagConstraints gbc = new GridBagConstraints();
-            gbc.fill = GridBagConstraints.HORIZONTAL;
-            gbc.gridx = 0;
-            gbc.weightx = 1.0;
-
-            gbc.gridy = 0;
-            form.add(fieldLabel("Name"), gbc);
-            gbc.gridy = 1;
-            gbc.insets = new Insets(4, 0, 0, 0);
-            nameField = new JTextField();
-            styleDialogField(nameField, "Product name");
-            form.add(nameField, gbc);
-
-            gbc.gridy = 2;
-            gbc.insets = new Insets(14, 0, 0, 0);
-            form.add(fieldLabel("Category"), gbc);
-            gbc.gridy = 3;
-            gbc.insets = new Insets(4, 0, 0, 0);
-            categoryBox = new JComboBox<>();
-            categoryBox.setFont(FONT_BASE);
-            categoryBox.putClientProperty("JComponent.roundRect", true);
-            categoryBox.setPreferredSize(new Dimension(0, 42));
-            for (Category c : productDAO.findAllCategories()) {
-                categoryBox.addItem(c);
-            }
-            form.add(categoryBox, gbc);
-
-            gbc.gridy = 4;
-            gbc.insets = new Insets(14, 0, 0, 0);
-            form.add(fieldLabel("Quantity"), gbc);
-            gbc.gridy = 5;
-            gbc.insets = new Insets(4, 0, 0, 0);
-            quantityField = new JTextField();
-            styleDialogField(quantityField, "0");
-            form.add(quantityField, gbc);
-
-            gbc.gridy = 6;
-            gbc.insets = new Insets(14, 0, 0, 0);
-            form.add(fieldLabel("Price (PHP)"), gbc);
-            gbc.gridy = 7;
-            gbc.insets = new Insets(4, 0, 0, 0);
-            priceField = new JTextField();
-            styleDialogField(priceField, "0.00");
-            form.add(priceField, gbc);
-
-            gbc.gridy = 8;
-            gbc.weighty = 1.0;
-            gbc.fill = GridBagConstraints.BOTH;
-            form.add(Box.createGlue(), gbc);
-
-            JScrollPane scroller = new JScrollPane(form);
-            scroller.setBorder(BorderFactory.createEmptyBorder());
-            scroller.getViewport().setBackground(SURFACE);
-            scroller.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
-            scroller.getVerticalScrollBar().setUnitIncrement(16);
-
-            root.add(scroller, BorderLayout.CENTER);
-
-            JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
-            actions.setOpaque(false);
-            actions.setBorder(new EmptyBorder(16, 30, 22, 30));
-
-            JButton cancel = new SecondaryButton("Cancel");
-            cancel.setPreferredSize(new Dimension(100, 40));
-            cancel.addActionListener(e -> dispose());
-
-            JButton save = new AccentButton(existing == null ? "Add" : "Save");
-            save.setPreferredSize(new Dimension(120, 40));
-            save.addActionListener(e -> doSave());
-
-            actions.add(cancel);
-            actions.add(save);
-            root.add(actions, BorderLayout.SOUTH);
-
-            getRootPane().setDefaultButton(save);
-            setContentPane(root);
-
-            if (existing != null) prefill(existing);
-        }
-
-        private JLabel fieldLabel(String text) {
-            JLabel l = new JLabel(text);
-            l.setFont(new Font("Segoe UI", Font.BOLD, 13));
-            l.setForeground(TEXT_DARK);
-            return l;
-        }
-
-        private void styleDialogField(JTextField f, String placeholder) {
-            f.setFont(FONT_BASE);
-            f.putClientProperty("JTextField.placeholderText", placeholder);
-            f.putClientProperty("JComponent.roundRect", true);
-            f.setBorder(BorderFactory.createCompoundBorder(
-                    BorderFactory.createLineBorder(FIELD_BORDER, 1, true),
-                    BorderFactory.createEmptyBorder(10, 14, 10, 14)));
-            f.setPreferredSize(new Dimension(0, 42));
-        }
-
-        private void prefill(Product p) {
-            nameField.setText(p.getName());
-            quantityField.setText(String.valueOf(p.getQuantity()));
-            priceField.setText(String.format("%.2f", p.getPrice()));
-            for (int i = 0; i < categoryBox.getItemCount(); i++) {
-                if (categoryBox.getItemAt(i).getId() == p.getCategoryId()) {
-                    categoryBox.setSelectedIndex(i);
-                    break;
-                }
-            }
-        }
-
-        private void doSave() {
-            String name = nameField.getText().trim();
-            Category cat = (Category) categoryBox.getSelectedItem();
-            String qtyText = quantityField.getText().trim();
-            String priceText = priceField.getText().trim();
-
-            if (name.isEmpty()) { warn("Please enter a product name."); return; }
-            if (cat == null) { warn("Please choose a category."); return; }
-
-            int qty;
-            try {
-                qty = Integer.parseInt(qtyText);
-                if (qty < 0) { warn("Quantity cannot be negative."); return; }
-            } catch (NumberFormatException e) {
-                warn("Quantity must be a whole number."); return;
-            }
-
-            double price;
-            try {
-                price = Double.parseDouble(priceText);
-                if (price < 0) { warn("Price cannot be negative."); return; }
-            } catch (NumberFormatException e) {
-                warn("Price must be a number."); return;
-            }
-
-            Product p = existing == null ? new Product() : existing;
-            p.setName(name);
-            p.setCategoryId(cat.getId());
-            p.setQuantity(qty);
-            p.setPrice(price);
-
-            boolean ok = existing == null
-                    ? productDAO.insert(p)
-                    : productDAO.update(p);
-
-            if (!ok) { warn("Failed to save product."); return; }
-
-            saved = true;
-            dispose();
-        }
-
-        private void warn(String msg) {
-            JOptionPane.showMessageDialog(this, msg, "Validation",
-                    JOptionPane.WARNING_MESSAGE);
         }
     }
 }
